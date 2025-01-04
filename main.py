@@ -1,95 +1,74 @@
 import pyupbit
 import pandas as pd
-from datetime import datetime, timedelta
 from prophet import Prophet
 import matplotlib.pyplot as plt
+from datetime import datetime
+from config import SYMBOLS, FORECAST_HOURS
+from utils import load_last_6months_data
 
-# Function to fetch historical data
-def fetch_ohlcv(ticker, interval='minute60', count=4380):
-    df = pyupbit.get_ohlcv(ticker, interval=interval, count=count)
-    # 종가와 거래량만 선택
-    return df[['close', 'volume']]
-
-# Function to prepare data for Prophet
-def prepare_prophet_data(df):
-    prophet_df = df[['close']].copy()
-    prophet_df.index.name = 'ds'
-    prophet_df.reset_index(inplace=True)
-    prophet_df.columns = ['ds', 'y']
-    return prophet_df
-
-# Function to create and train Prophet model
-def train_prophet_model(df):
-    model = Prophet(
-        changepoint_prior_scale=0.05,
-        yearly_seasonality=True,
-        weekly_seasonality=True,
-        daily_seasonality=True,
-        interval_width=0.95
-    )
-    model.fit(df)
-    return model
-
-# Function to generate trading signals
-def generate_signals(forecast):
-    signals = pd.DataFrame()
-    signals['ds'] = forecast['ds']
-    signals['yhat'] = forecast['yhat']
-    signals['yhat_lower'] = forecast['yhat_lower']
-    signals['yhat_upper'] = forecast['yhat_upper']
-    
-    # Generate buy/sell signals
-    signals['signal'] = 0
-    signals.loc[signals['y'] <= signals['yhat_lower'], 'signal'] = 1  # Buy signal
-    signals.loc[signals['y'] >= signals['yhat_upper'], 'signal'] = -1  # Sell signal
-    
-    return signals
+def analyze_crypto(symbol_name, symbol):
+    try:
+        # 6개월 데이터 로드
+        df = load_last_6months_data(symbol)
+        if df is None or df.empty:
+            raise ValueError(f"데이터가 없습니다: {symbol}")
+        
+        # Prophet 데이터 준비
+        prophet_df = pd.DataFrame({
+            'ds': df.index,
+            'y': df['close']
+        }).reset_index(drop=True)
+        
+        # 모델 학습
+        model = Prophet(
+            changepoint_prior_scale=0.05,
+            yearly_seasonality=True,
+            weekly_seasonality=True,
+            daily_seasonality=True,
+            interval_width=0.95
+        )
+        model.fit(prophet_df)
+        
+        # 예측
+        future = model.make_future_dataframe(periods=FORECAST_HOURS, freq='H')
+        forecast = model.predict(future)
+        
+        return prophet_df, forecast
+        
+    except Exception as e:
+        print(f"❌ {symbol} 분석 실패: {str(e)}")
+        return None, None
 
 def main():
-    # Fetch data for BTC and ETH from Upbit
-    btc_df = fetch_ohlcv("KRW-BTC")
-    eth_df = fetch_ohlcv("KRW-ETH")
+    print("암호화폐 분석 시작...")
+    fig, axes = plt.subplots(2, 1, figsize=(15, 12))
     
-    # Prepare data for Prophet
-    btc_prophet_df = prepare_prophet_data(btc_df)
-    eth_prophet_df = prepare_prophet_data(eth_df)
-    
-    # Train models
-    btc_model = train_prophet_model(btc_prophet_df)
-    eth_model = train_prophet_model(eth_prophet_df)
-    
-    # Make predictions
-    future_btc = btc_model.make_future_dataframe(periods=24, freq='H')
-    forecast_btc = btc_model.predict(future_btc)
-    
-    future_eth = eth_model.make_future_dataframe(periods=24, freq='H')
-    forecast_eth = eth_model.predict(future_eth)
-    
-    # Generate signals
-    btc_signals = generate_signals(forecast_btc)
-    eth_signals = generate_signals(forecast_eth)
-    
-    # Plot results
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10))
-    
-    # Plot BTC
-    ax1.plot(btc_prophet_df['ds'], btc_prophet_df['y'], 'k.', label='Actual')
-    ax1.plot(forecast_btc['ds'], forecast_btc['yhat'], 'b-', label='Prediction')
-    ax1.fill_between(forecast_btc['ds'], forecast_btc['yhat_lower'], forecast_btc['yhat_upper'], 
-                     color='b', alpha=0.2, label='Confidence Interval')
-    ax1.set_title('BTC/USDT Prediction')
-    ax1.legend()
-    
-    # Plot ETH
-    ax2.plot(eth_prophet_df['ds'], eth_prophet_df['y'], 'k.', label='Actual')
-    ax2.plot(forecast_eth['ds'], forecast_eth['yhat'], 'r-', label='Prediction')
-    ax2.fill_between(forecast_eth['ds'], forecast_eth['yhat_lower'], forecast_eth['yhat_upper'], 
-                     color='r', alpha=0.2, label='Confidence Interval')
-    ax2.set_title('ETH/USDT Prediction')
-    ax2.legend()
+    for i, (symbol_name, symbol) in enumerate(SYMBOLS.items()):
+        prophet_df, forecast = analyze_crypto(symbol_name, symbol)
+        
+        if prophet_df is not None and forecast is not None:
+            # 그래프 그리기
+            ax = axes[i]
+            ax.plot(prophet_df['ds'], prophet_df['y'], 'k.', label='실제 가격')
+            ax.plot(forecast['ds'], forecast['yhat'], 'b-', label='예측')
+            ax.fill_between(forecast['ds'], 
+                          forecast['yhat_lower'], 
+                          forecast['yhat_upper'],
+                          color='b', alpha=0.2, label='신뢰 구간')
+            ax.set_title(f"{symbol} 가격 예측")
+            ax.legend()
+            
+            # 현재 가격과 예측 가격 비교
+            current_price = prophet_df['y'].iloc[-1]
+            predicted_price = forecast['yhat'].iloc[-1]
+            print(f"\n{symbol} 분석 결과:")
+            print(f"현재 가격: {current_price:,.0f}")
+            print(f"예측 가격: {predicted_price:,.0f}")
+            print(f"신뢰 구간: {forecast['yhat_lower'].iloc[-1]:,.0f} ~ {forecast['yhat_upper'].iloc[-1]:,.0f}")
     
     plt.tight_layout()
     plt.show()
+    print("\n분석 완료!")
 
 if __name__ == "__main__":
     main()

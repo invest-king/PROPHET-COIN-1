@@ -4,8 +4,7 @@ from datetime import datetime, timedelta
 from config import DATA_PATH
 
 def ensure_data_dir():
-    if not os.path.exists(DATA_PATH):
-        os.makedirs(DATA_PATH)
+    os.makedirs(DATA_PATH, exist_ok=True)
 
 def get_data_filename(symbol):
     return os.path.join(DATA_PATH, f'{symbol}_data.csv')
@@ -21,7 +20,7 @@ def save_data(df, symbol):
 def load_data(symbol):
     filename = get_data_filename(symbol)
     if os.path.exists(filename):
-        return pd.read_csv(filename, index_col=0, parse_dates=True)
+        return pd.read_csv(filename, parse_dates=['index'])
     return None
 
 def load_last_6months_data(symbol):
@@ -33,8 +32,14 @@ def load_last_6months_data(symbol):
     for date_str in dates:
         filename = get_daily_filename(symbol, date_str)
         if os.path.exists(filename):
-            df = pd.read_csv(filename, index_col=0, parse_dates=True)
-            dfs.append(df)
+            try:
+                df = pd.read_csv(filename)
+                df['timestamp'] = pd.to_datetime(df.index)
+                df.set_index('timestamp', inplace=True)
+                dfs.append(df)
+            except Exception as e:
+                print(f"Error loading {filename}: {e}")
+                continue
     
     if dfs:
         return pd.concat(dfs, axis=0).sort_index()

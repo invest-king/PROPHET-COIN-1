@@ -16,17 +16,21 @@ def analyze_crypto(symbol_name, symbol):
         # Prophet 데이터 준비
         prophet_df = pd.DataFrame({
             'ds': df.index,
-            'y': df['close']
+            'y': df['close'].astype(float)  # 명시적 형변환 추가
         }).reset_index(drop=True)
+        
+        # 결측치 제거
+        prophet_df = prophet_df.dropna()
         
         # 모델 학습
         model = Prophet(
             changepoint_prior_scale=0.05,
-            yearly_seasonality=True,
+            yearly_seasonality=False,  # 6개월 데이터로는 연간 계절성 분석이 어려움
             weekly_seasonality=True,
             daily_seasonality=True,
             interval_width=0.95
         )
+        
         model.fit(prophet_df)
         
         # 예측
